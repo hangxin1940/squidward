@@ -219,11 +219,6 @@ func _newfileUploadRequest(uri string, params map[string][]string, paramName, pa
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
-	part, err := writer.CreateFormFile(paramName, filepath.Base(path))
-	if err != nil {
-		return nil, err
-	}
-	_, err = io.Copy(part, file)
 
 	for key, val := range params {
 		if len(val) > 1 {
@@ -234,6 +229,12 @@ func _newfileUploadRequest(uri string, params map[string][]string, paramName, pa
 			_ = writer.WriteField(key, val[0])
 		}
 	}
+
+	part, err := writer.CreateFormFile(paramName, filepath.Base(path))
+	if err != nil {
+		return nil, err
+	}
+	_, err = io.Copy(part, file)
 	err = writer.Close()
 	if err != nil {
 		return nil, err
