@@ -3,13 +3,34 @@ package backend
 import (
 	"context"
 	"github.com/sashabaranov/go-openai"
+	"time"
 )
 
-type AdapterConfig = func(Adapter) error
+type ModelType string
+
+var (
+	ModelTypeLLM   ModelType = "llm"
+	ModelTypeSTT   ModelType = "stt"
+	ModelTypeTTS   ModelType = "tts"
+	ModelTypeImage ModelType = "image"
+)
+
+type AdapterConfig struct {
+	Name         string                 `mapstructure:"name"`
+	DefaultModel string                 `mapstructure:"default_model"`
+	Type         ModelType              `mapstructure:"type"`
+	ApiBase      string                 `mapstructure:"api_base"`
+	ApiStyle     string                 `mapstructure:"api_style"`
+	ApiToken     string                 `mapstructure:"api_token,omitempty"`
+	HttpTimeout  time.Duration          `mapstructure:"http_timeout,omitempty"`
+	HttpProxy    string                 `mapstructure:"http_proxy,omitempty"`
+	Extras       map[string]interface{} `mapstructure:",remain"`
+}
 
 // Adapter 后端适配器
 type Adapter interface {
 	Name() string
+	Type() ModelType
 	Models(context.Context) (openai.ModelsList, error)
 	ChatCompletions(context.Context, openai.ChatCompletionRequest) (openai.ChatCompletionResponse, error)
 	ChatCompletionsStreaming(context.Context, openai.ChatCompletionRequest) (*openai.ChatCompletionStream, error)
@@ -30,34 +51,29 @@ type AdapterService struct {
 	image Adapter
 }
 
-func (s *AdapterService) SetLLMBackend(a Adapter) {
-	s.llm = a
+func (s *AdapterService) SetBackend(a Adapter) {
+	switch a.Type() {
+	case ModelTypeLLM:
+		s.llm = a
+	case ModelTypeTTS:
+		s.tts = a
+	case ModelTypeSTT:
+		s.stt = a
+	case ModelTypeImage:
+		s.image = a
+	}
 }
 
-func (s *AdapterService) GetLLMBackend() Adapter {
-	return s.llm
-}
-
-func (s *AdapterService) SetSTTBackend(a Adapter) {
-	s.stt = a
-}
-
-func (s *AdapterService) GetSTTBackend() Adapter {
-	return s.stt
-}
-
-func (s *AdapterService) SetTTSBackend(a Adapter) {
-	s.tts = a
-}
-
-func (s *AdapterService) GetTTSBackend() Adapter {
-	return s.tts
-}
-
-func (s *AdapterService) SetImageBackend(a Adapter) {
-	s.image = a
-}
-
-func (s *AdapterService) GetImageBackend() Adapter {
-	return s.image
+func (s *AdapterService) GetBackend(t ModelType) Adapter {
+	switch t {
+	case ModelTypeLLM:
+		return s.llm
+	case ModelTypeTTS:
+		return s.tts
+	case ModelTypeSTT:
+		return s.stt
+	case ModelTypeImage:
+		return s.image
+	}
+	return nil
 }

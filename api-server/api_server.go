@@ -87,7 +87,7 @@ func (s *ApiServer) Stop() {
 
 // chatCompletions 聊天
 func (s *ApiServer) chatCompletions(c *gin.Context) {
-	bk := s.aService.GetLLMBackend()
+	bk := s.aService.GetBackend(backend.ModelTypeLLM)
 	if bk == nil {
 		s.logger.Error("未配置LLM")
 		c.Status(http.StatusInternalServerError)
@@ -134,7 +134,7 @@ func (s *ApiServer) chatCompletions(c *gin.Context) {
 
 // imagesGenerations 创建图像
 func (s *ApiServer) imagesGenerations(c *gin.Context) {
-	bk := s.aService.GetImageBackend()
+	bk := s.aService.GetBackend(backend.ModelTypeImage)
 	if bk == nil {
 		s.logger.Error("未配置图像服务")
 		c.Status(http.StatusInternalServerError)
@@ -160,7 +160,7 @@ func (s *ApiServer) imagesGenerations(c *gin.Context) {
 
 // audioSpeech TTS
 func (s *ApiServer) audioSpeech(c *gin.Context) {
-	bk := s.aService.GetTTSBackend()
+	bk := s.aService.GetBackend(backend.ModelTypeTTS)
 	if bk == nil {
 		s.logger.Error("未配置TTS")
 		c.Status(http.StatusInternalServerError)
@@ -189,7 +189,7 @@ func (s *ApiServer) audioSpeech(c *gin.Context) {
 
 // audioTranscriptions STT
 func (s *ApiServer) audioTranscriptions(c *gin.Context) {
-	bk := s.aService.GetSTTBackend()
+	bk := s.aService.GetBackend(backend.ModelTypeSTT)
 	if bk == nil {
 		s.logger.Error("未配置STT")
 		c.Status(http.StatusInternalServerError)
@@ -260,7 +260,8 @@ func (s *ApiServer) audioTranscriptions(c *gin.Context) {
 
 type Model struct {
 	openai.Model
-	BackendName string `json:"backend_name"`
+	BackendName string            `json:"backend_name"`
+	BackendType backend.ModelType `json:"backend_type"`
 }
 
 func (m Model) String() string {
@@ -279,7 +280,7 @@ func (s *ApiServer) models(c *gin.Context) {
 
 	var allModels []Model
 
-	if bk := s.aService.GetLLMBackend(); bk != nil {
+	if bk := s.aService.GetBackend(backend.ModelTypeLLM); bk != nil {
 		models, err := bk.Models(context.Background())
 		if err != nil {
 			s.logger.Error(err)
@@ -297,7 +298,7 @@ func (s *ApiServer) models(c *gin.Context) {
 
 	}
 
-	if bk := s.aService.GetTTSBackend(); bk != nil {
+	if bk := s.aService.GetBackend(backend.ModelTypeTTS); bk != nil {
 		models, err := bk.Models(context.Background())
 		if err != nil {
 			s.logger.Error(err)
@@ -314,7 +315,24 @@ func (s *ApiServer) models(c *gin.Context) {
 		}
 	}
 
-	if bk := s.aService.GetSTTBackend(); bk != nil {
+	if bk := s.aService.GetBackend(backend.ModelTypeSTT); bk != nil {
+		models, err := bk.Models(context.Background())
+		if err != nil {
+			s.logger.Error(err)
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+
+		for _, m := range models.Models {
+			model := Model{
+				Model:       m,
+				BackendName: bk.Name(),
+			}
+			allModels = append(allModels, model)
+		}
+	}
+
+	if bk := s.aService.GetBackend(backend.ModelTypeImage); bk != nil {
 		models, err := bk.Models(context.Background())
 		if err != nil {
 			s.logger.Error(err)

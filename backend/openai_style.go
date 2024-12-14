@@ -2,37 +2,47 @@ package backend
 
 import (
 	"context"
-	"fmt"
 	"github.com/sashabaranov/go-openai"
 	"net/http"
+	"net/url"
+	"time"
 )
 
 var _ Adapter = (*OpenAIStyleBackend)(nil)
 
-func NewOpenAIStyleBackend(name string, m map[string]string, httpclient *http.Client) (*OpenAIStyleBackend, error) {
-	var config openai.ClientConfig
-	if apiToken, has := m["api_token"]; has {
-		config = openai.DefaultConfig(apiToken)
-	} else {
-		return nil, fmt.Errorf("%s key `api_token` not found", name)
+func NewOpenAIStyleBackend(cfg *AdapterConfig) (*OpenAIStyleBackend, error) {
+	config := openai.DefaultConfig(cfg.ApiToken)
+	config.BaseURL = cfg.ApiBase
+	if cfg.HttpTimeout == 0 {
+		cfg.HttpTimeout = 10 * time.Second
 	}
 
-	if base_url, has := m["api_base"]; has {
-		config.BaseURL = base_url
-	} else {
-		return nil, fmt.Errorf("%s key `api_token` not found", name)
+	httpClient := &http.Client{
+		Timeout: cfg.HttpTimeout,
 	}
 
-	if httpclient != nil {
-		config.HTTPClient = &http.Client{}
+	if cfg.HttpProxy != "" {
+		pu, err := url.Parse(cfg.HttpProxy)
+		if err != nil {
+			return nil, err
+		}
+		httpClient.Transport = &http.Transport{Proxy: http.ProxyURL(pu)}
 	}
-	return &OpenAIStyleBackend{name: name, client: openai.NewClientWithConfig(config)}, nil
+
+	config.HTTPClient = httpClient
+
+	return &OpenAIStyleBackend{name: cfg.Name, modelType: cfg.Type, client: openai.NewClientWithConfig(config)}, nil
 }
 
 // OpenAIStyleBackend openai风格api
 type OpenAIStyleBackend struct {
-	name   string
-	client *openai.Client
+	name      string
+	modelType ModelType
+	client    *openai.Client
+}
+
+func (o *OpenAIStyleBackend) Type() ModelType {
+	return o.modelType
 }
 
 func (o *OpenAIStyleBackend) Name() string {

@@ -35,50 +35,41 @@ func main() {
 		panic(err)
 	}
 
-	backendCfgs := viper.GetStringMap("ai_backend")
-
 	logger := lib.NewLogger(6, "SQUIDWARD", 8)
 
+	var backendCfgs []*backend.AdapterConfig
+
+	err = viper.UnmarshalKey("ai_backend", &backendCfgs)
+	if err != nil {
+		panic(err)
+	}
+
+	if backendCfgs == nil {
+		logger.Fatalf("ai_backend not found in %s", conf_yaml)
+	}
+
 	aServcie := &backend.AdapterService{}
-	for bktype, cfgI := range backendCfgs {
-		cfg := cfgI.(map[string]interface{})
-		config := map[string]string{}
-		for key, value := range cfg {
-			strKey := fmt.Sprintf("%v", key)
-			strValue := fmt.Sprintf("%v", value)
-			config[strKey] = strValue
+	for _, cfg := range backendCfgs {
+		if cfg.Name == "" {
+			logger.Fatal("`name` not found in config")
+		}
+		if cfg.Type == "" {
+			logger.Fatalf("`type` not found in %s", cfg.Type)
+		}
+		if cfg.ApiBase == "" {
+			logger.Fatalf("`api_base` not found in %s", cfg.Name)
+		}
+		if cfg.ApiStyle == "" {
+			logger.Fatalf("`api_style` not found in %s", cfg.Name)
 		}
 
-		if _, has := config["name"]; !has {
-			logger.Fatalf("`name` not found in %s", bktype)
-		}
-		if _, has := config["type"]; !has {
-			logger.Fatalf("`type` not found in %s", bktype)
-		}
-		if _, has := config["api_base"]; !has {
-			logger.Fatalf("`api_base` not found in %s", bktype)
-		}
-
-		var bk backend.Adapter
-
-		switch config["type"] {
+		switch cfg.ApiStyle {
 		case "openai":
-			var errb error
-			bk, errb = backend.NewOpenAIStyleBackend(bktype, config, nil)
-			if errb != nil {
+			if bk, errb := backend.NewOpenAIStyleBackend(cfg); errb != nil {
 				logger.Fatal(err)
+			} else {
+				aServcie.SetBackend(bk)
 			}
-		}
-
-		switch bktype {
-		case "llm":
-			aServcie.SetLLMBackend(bk)
-		case "tts":
-			aServcie.SetTTSBackend(bk)
-		case "stt":
-			aServcie.SetSTTBackend(bk)
-		case "image":
-			aServcie.SetImageBackend(bk)
 		}
 	}
 
