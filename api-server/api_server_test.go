@@ -2,6 +2,7 @@ package api_server
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"github.com/sashabaranov/go-openai"
@@ -12,9 +13,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"squidward/backend"
 	"squidward/lib"
+	"squidward/modules/audio"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -22,27 +27,56 @@ import (
 func _initApiServer() *ApiServer {
 	logger := lib.NewLogger(6, "test", 9)
 
-	cofnig := map[string]string{
-		"name":      "ollama",
-		"type":      "openai",
-		"api_base":  "http://127.0.0.1:1234/v1/",
-		"api_token": "123456",
-	}
-	bkOpenai, err := backend.NewOpenAIStyleBackend("Ollama", cofnig, nil)
+	bkLLM, err := backend.NewOpenAIStyleBackend(&backend.AdapterConfig{
+		Name:         "ollama",
+		DefaultModel: "gemma2:9b",
+		Type:         backend.ModelTypeLLM,
+		ApiStyle:     "openai",
+		ApiBase:      "http://127.0.0.1:1234/v1/",
+		ApiToken:     "123456",
+	})
+
+	bkTTS, err := backend.NewOpenAIStyleBackend(&backend.AdapterConfig{
+		Name:         "ollama",
+		DefaultModel: "gemma2:9b",
+		Type:         backend.ModelTypeTTS,
+		ApiStyle:     "openai",
+		ApiBase:      "http://127.0.0.1:1234/v1/",
+		ApiToken:     "123456",
+	})
+
+	bkSTT, err := backend.NewOpenAIStyleBackend(&backend.AdapterConfig{
+		Name:         "ollama",
+		DefaultModel: openai.Whisper1,
+		Type:         backend.ModelTypeSTT,
+		ApiStyle:     "openai",
+		ApiBase:      "https://api.openai.com/v1/",
+		ApiToken:     "123456",
+	})
+
+	bkIMG, err := backend.NewOpenAIStyleBackend(&backend.AdapterConfig{
+		Name:         "ollama",
+		DefaultModel: "gemma2:9b",
+		Type:         backend.ModelTypeImage,
+		ApiStyle:     "openai",
+		ApiBase:      "http://127.0.0.1:1234/v1/",
+		ApiToken:     "123456",
+	})
 	if err != nil {
 		panic(err)
 	}
 
 	aServcie := &backend.AdapterService{}
-	aServcie.SetLLMBackend(bkOpenai)
-	aServcie.SetTTSBackend(bkOpenai)
-	aServcie.SetSTTBackend(bkOpenai)
-	aServcie.SetImageBackend(bkOpenai)
+	aServcie.SetBackend(bkLLM)
+	aServcie.SetBackend(bkTTS)
+	aServcie.SetBackend(bkSTT)
+	aServcie.SetBackend(bkIMG)
 
 	return &ApiServer{
-		logger:   logger,
-		apiBase:  "/v1",
-		aService: aServcie,
+		logger:      logger,
+		apiBase:     "/v1",
+		aService:    aServcie,
+		audioFrames: map[string]*audio.Audio{},
 	}
 }
 
@@ -297,4 +331,120 @@ func TestApiServer_sampleServer(t *testing.T) {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func TestApiServer_saveAudioFrames(t *testing.T) {
+	http.HandleFunc("/v1/audio/transcriptions", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			r.ParseMultipartForm(32 << 20)
+			fmt.Println("model:", r.FormValue("model"))
+			fmt.Println("prompt:", r.FormValue("prompt"))
+			fmt.Println("response_format:", r.FormValue("response_format"))
+			fmt.Println("temperature:", r.FormValue("temperature"))
+			fmt.Println("language:", r.FormValue("language"))
+			fmt.Println("timestamp_granularities:", r.FormValue("timestamp_granularities"))
+			fmt.Println("audio_mime:", r.FormValue("audio_mime"))
+			fmt.Println("audio_id:", r.FormValue("audio_id"))
+			fmt.Println("is_finish:", r.FormValue("is_finish"))
+			fmt.Println("is_frame:", r.FormValue("is_frame"))
+			fmt.Println("frame_index:", r.FormValue("frame_index"))
+			f, h, _ := r.FormFile("file")
+			fmt.Println("file", h.Filename)
+
+			rpath := filepath.Join(lib.RuntimeDir(), "../", "tmp", fmt.Sprintf("audioframe_%s", r.FormValue("audio_id")))
+			os.MkdirAll(rpath, os.ModePerm)
+
+			outFile, _ := os.Create(filepath.Join(rpath, fmt.Sprintf("%s_%s", r.FormValue("frame_index"), h.Filename)))
+
+			// handle err
+			defer outFile.Close()
+			_, _ = io.Copy(outFile, f)
+
+		}
+
+		fmt.Fprintf(w, "Hello, %s!", r.URL.Path[1:])
+	})
+
+	err := http.ListenAndServe(fmt.Sprintf(":%d", 12345), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+		fmt.Printf("%s %s %s\n", r.RemoteAddr, r.Method, r.URL)
+		//for k, h := range r.Header {
+		//	fmt.Printf("\t%s: %s\n", k, strings.Join(h, "; "))
+		//}
+		fmt.Println()
+
+		http.DefaultServeMux.ServeHTTP(w, r)
+	}))
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func TestApiServer_AudioTranscriptionsFrame(t *testing.T) {
+
+	mserver := _initApiServer()
+	router := mserver.SetupRouter()
+	id := "1"
+
+	rpath := filepath.Join(lib.RuntimeDir(), "../", "tmp", fmt.Sprintf("audioframe_%s", id))
+	entries, err := os.ReadDir(rpath)
+	if err != nil {
+		panic(err)
+	}
+
+	files := []string{}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		fns := strings.Split(entry.Name(), "_")
+		if len(fns) != 2 {
+			continue
+		}
+
+		_, erra := strconv.Atoi(fns[0])
+		if erra != nil {
+			continue
+		}
+
+		files = append(files, entry.Name())
+	}
+
+	files = slices.SortedFunc(slices.Values(files), func(m1, m2 string) int {
+		fns1 := strings.Split(m1, "_")
+		fns2 := strings.Split(m2, "_")
+
+		i1, _ := strconv.Atoi(fns1[0])
+		i2, _ := strconv.Atoi(fns2[0])
+		return cmp.Compare(i1, i2)
+	})
+
+	for i, f := range files {
+		extraParams := map[string][]string{
+			"model":       {openai.Whisper1},
+			"audio_id":    {id},
+			"frame_index": {fmt.Sprintf("%d", i)},
+			"is_finish":   {"0"},
+			"is_frame":    {"1"},
+			"audio_mime":  {"audio/L16;rate=8000"},
+		}
+
+		if i == len(files)-1 {
+			extraParams["is_finish"] = []string{"1"}
+		}
+
+		req, err := _newfileUploadRequest("/v1/audio/transcriptions", extraParams, "file", path.Join(rpath, f))
+		assert.Empty(t, err)
+
+		rc := httptest.NewRecorder()
+		router.ServeHTTP(rc, req)
+		assert.Equal(t, 200, rc.Code)
+
+		if i == len(files)-1 {
+			fmt.Println(rc.Body.String())
+		}
+	}
+
 }

@@ -9,18 +9,21 @@ import (
 	"github.com/sashabaranov/go-openai"
 	"github.com/sirupsen/logrus"
 	"io"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"slices"
 	"squidward/backend"
+	"squidward/modules/audio"
 	"strconv"
 )
 
 func NewApiServer(logger *logrus.Logger, aService *backend.AdapterService) *ApiServer {
 	return &ApiServer{
-		logger:   logger,
-		apiBase:  "/v1",
-		aService: aService,
+		logger:      logger,
+		apiBase:     "/v1",
+		aService:    aService,
+		audioFrames: map[string]*audio.Audio{},
 	}
 }
 
@@ -29,6 +32,8 @@ type ApiServer struct {
 	apiBase     string
 	netListener net.Listener
 	aService    *backend.AdapterService
+
+	audioFrames map[string]*audio.Audio // TODO 线程安全
 }
 
 func (s *ApiServer) Serve(netListener net.Listener) error {
@@ -202,26 +207,75 @@ func (s *ApiServer) audioTranscriptions(c *gin.Context) {
 		return
 	}
 
-	req := openai.AudioRequest{}
-	if model, has := form.Value["model"]; has {
-		req.Model = model[0]
-	} else {
+	if _, hasf := form.File["file"]; !hasf {
 		c.Status(http.StatusBadRequest)
 		return
 	}
 
-	if audio, has := form.File["file"]; has {
-		fs, err := audio[0].Open()
-		if err != nil {
+	if _, has := form.Value["is_frame"]; has {
+		// 非完整音频，需要整合
+
+		if _, hasf := form.Value["audio_id"]; !hasf {
 			c.Status(http.StatusBadRequest)
 			return
 		}
-		req.Reader = fs
-		req.FilePath = audio[0].Filename
-	} else {
+		if _, hasf := form.Value["audio_mime"]; !hasf {
+			c.Status(http.StatusBadRequest)
+			return
+		}
+
+		if mimeok := audio.CheckMimeValid(form.Value["audio_mime"][0]); !mimeok {
+			c.Status(http.StatusBadRequest)
+			return
+		}
+
+		if _, hasf := form.Value["frame_index"]; !hasf {
+			c.Status(http.StatusBadRequest)
+			return
+		}
+		if _, hasf := form.Value["is_finish"]; !hasf {
+			c.Status(http.StatusBadRequest)
+			return
+		}
+		if _, errf := strconv.Atoi(form.Value["frame_index"][0]); errf != nil {
+			c.Status(http.StatusBadRequest)
+			return
+		}
+
+		req, errf := s.audioTranscriptionsFrame(form)
+		if errf != nil {
+			s.logger.Error(err)
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+
+		if req != nil {
+			res, err := bk.AudioTranscriptions(context.Background(), *req)
+			if err != nil {
+				s.logger.Error(err)
+				c.Status(http.StatusInternalServerError)
+				return
+			}
+			c.JSON(http.StatusOK, res)
+		} else {
+			c.Status(http.StatusOK)
+		}
+		return
+	}
+
+	req := openai.AudioRequest{}
+	if _, hasf := form.File["model"]; hasf {
+		req.Model = form.Value["model"][0]
+	}
+
+	audio := form.File["file"]
+	fs, err := audio[0].Open()
+	if err != nil {
 		c.Status(http.StatusBadRequest)
 		return
 	}
+	req.Reader = fs
+	req.FilePath = audio[0].Filename
 
 	if lang, has := form.Value["language"]; has {
 		req.Language = lang[0]
@@ -256,6 +310,68 @@ func (s *ApiServer) audioTranscriptions(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, res)
+}
+
+func (s *ApiServer) audioTranscriptionsFrame(form *multipart.Form) (*openai.AudioRequest, error) {
+	id := form.Value["audio_id"][0]
+	mime := form.Value["audio_mime"][0]
+	finished := form.Value["is_finish"][0] == "1"
+	index, _ := strconv.Atoi(form.Value["frame_index"][0])
+
+	af := s.audioFrames[id]
+	if af == nil {
+		af = audio.NewAudio(mime)
+		s.audioFrames[id] = af
+	}
+
+	afile := form.File["file"][0]
+	content, _ := afile.Open()
+
+	bs, _ := io.ReadAll(content)
+
+	af.AddFrame(index, bs)
+
+	if finished {
+		defer delete(s.audioFrames, id)
+
+		req := openai.AudioRequest{}
+
+		if _, hasf := form.File["model"]; hasf {
+			req.Model = form.Value["model"][0]
+		}
+		req.Reader = af.ToAudioBytesReader()
+
+		req.FilePath = afile.Filename
+
+		if lang, has := form.Value["language"]; has {
+			req.Language = lang[0]
+		}
+
+		if prompt, has := form.Value["prompt"]; has {
+			req.Prompt = prompt[0]
+		}
+
+		if temperature, has := form.Value["temperature"]; has {
+			if ti, erri := strconv.ParseFloat(temperature[0], 32); erri == nil {
+				req.Temperature = float32(ti)
+			}
+		}
+
+		if format, has := form.Value["response_format"]; has {
+			req.Format = openai.AudioResponseFormat(format[0])
+		}
+
+		if tgs, has := form.Value["timestamp_granularities[]"]; has {
+			req.TimestampGranularities = []openai.TranscriptionTimestampGranularity{}
+			for _, tg := range tgs {
+				req.TimestampGranularities = append(req.TimestampGranularities, openai.TranscriptionTimestampGranularity(tg))
+			}
+		}
+
+		return &req, nil
+	}
+	return nil, nil
+
 }
 
 type Model struct {
