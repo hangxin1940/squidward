@@ -7,6 +7,7 @@ import (
 	"github.com/sashabaranov/go-openai"
 	"github.com/stretchr/testify/assert"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"squidward/backend"
 	"squidward/lib"
+	"strings"
 	"testing"
 )
 
@@ -270,4 +272,29 @@ func TestApiServer_ImagesGenerations(t *testing.T) {
 	assert.Equal(t, 200, w.Code)
 	fmt.Println(w.Body.String())
 
+}
+
+func TestApiServer_sampleServer(t *testing.T) {
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "<h1>Hello World</h1><div>Welcome to whereever you are</div>")
+	})
+
+	err := http.ListenAndServe(fmt.Sprintf(":%d", 12345), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Printf("%s %s %s\n", r.RemoteAddr, r.Method, r.URL)
+		fmt.Println()
+		for k, h := range r.Header {
+			fmt.Printf("%s: %s\n", k, strings.Join(h, "; "))
+		}
+		fmt.Println()
+		buf := new(strings.Builder)
+		io.Copy(buf, r.Body)
+		// check errors
+		fmt.Println(buf.String())
+		fmt.Println("------------------------")
+
+		http.DefaultServeMux.ServeHTTP(w, r)
+	}))
+	if err != nil {
+		log.Fatal(err)
+	}
 }
