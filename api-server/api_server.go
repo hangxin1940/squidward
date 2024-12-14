@@ -121,7 +121,9 @@ func (s *ApiServer) chatCompletions(c *gin.Context) {
 					}
 					return true
 				}
-				_, _ = w.Write(stream)
+
+				line := "data: " + string(stream) + "\n\n"
+				_, _ = w.Write([]byte(line))
 			}
 		})
 	} else {
@@ -250,12 +252,16 @@ func (s *ApiServer) audioTranscriptions(c *gin.Context) {
 		}
 
 		if req != nil {
+			if req.Language == "" {
+				req.Language = "zh"
+			}
 			res, err := bk.AudioTranscriptions(context.Background(), *req)
 			if err != nil {
 				s.logger.Error(err)
 				c.Status(http.StatusInternalServerError)
 				return
 			}
+			s.logger.Debug(res.Language, res.Text)
 			c.JSON(http.StatusOK, res)
 		} else {
 			c.Status(http.StatusOK)
