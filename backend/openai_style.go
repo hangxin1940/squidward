@@ -31,14 +31,20 @@ func NewOpenAIStyleBackend(cfg *AdapterConfig) (*OpenAIStyleBackend, error) {
 
 	config.HTTPClient = httpClient
 
-	return &OpenAIStyleBackend{name: cfg.Name, modelType: cfg.Type, client: openai.NewClientWithConfig(config)}, nil
+	return &OpenAIStyleBackend{
+		name:         cfg.Name,
+		defaultModel: cfg.DefaultModel,
+		modelType:    cfg.Type,
+		client:       openai.NewClientWithConfig(config),
+	}, nil
 }
 
 // OpenAIStyleBackend openai风格api
 type OpenAIStyleBackend struct {
-	name      string
-	modelType ModelType
-	client    *openai.Client
+	name         string
+	defaultModel string
+	modelType    ModelType
+	client       *openai.Client
 }
 
 func (o *OpenAIStyleBackend) Type() ModelType {
@@ -54,21 +60,36 @@ func (o *OpenAIStyleBackend) Models(ctx context.Context) (openai.ModelsList, err
 }
 
 func (o *OpenAIStyleBackend) ChatCompletions(ctx context.Context, request openai.ChatCompletionRequest) (openai.ChatCompletionResponse, error) {
+	if request.Model == "" {
+		request.Model = o.defaultModel
+	}
 	return o.client.CreateChatCompletion(ctx, request)
 }
 
 func (o *OpenAIStyleBackend) ChatCompletionsStreaming(ctx context.Context, request openai.ChatCompletionRequest) (*openai.ChatCompletionStream, error) {
+	if request.Model == "" {
+		request.Model = o.defaultModel
+	}
 	return o.client.CreateChatCompletionStream(ctx, request)
 }
 
 func (o *OpenAIStyleBackend) AudioSpeech(ctx context.Context, request openai.CreateSpeechRequest) (openai.RawResponse, error) {
+	if request.Model == "" {
+		request.Model = openai.SpeechModel(o.defaultModel)
+	}
 	return o.client.CreateSpeech(ctx, request)
 }
 
 func (o *OpenAIStyleBackend) AudioTranscriptions(ctx context.Context, request openai.AudioRequest) (openai.AudioResponse, error) {
+	if request.Model == "" {
+		request.Model = o.defaultModel
+	}
 	return o.client.CreateTranscription(ctx, request)
 }
 
 func (o *OpenAIStyleBackend) ImagesGenerations(ctx context.Context, request openai.ImageRequest) (openai.ImageResponse, error) {
+	if request.Model == "" {
+		request.Model = o.defaultModel
+	}
 	return o.client.CreateImage(ctx, request)
 }

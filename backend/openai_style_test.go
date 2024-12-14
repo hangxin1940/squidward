@@ -13,22 +13,15 @@ import (
 	"testing"
 )
 
-func _initOpenAIStyleBackend() *OpenAIStyleBackend {
-	cofnig := map[string]string{
-		"name":      "ollama",
-		"type":      "openai",
-		"api_base":  "http://127.0.0.1:1234/v1/",
-		"api_token": "123456",
-	}
-	bk, err := NewOpenAIStyleBackend("Ollama", cofnig, nil)
-	if err != nil {
-		panic(err)
-	}
-	return bk
-}
-
 func TestOpenAIStyleBackend_Models(t *testing.T) {
-	client := _initOpenAIStyleBackend()
+	client, _ := NewOpenAIStyleBackend(&AdapterConfig{
+		Name:         "ollama",
+		DefaultModel: "gemma2:9b",
+		Type:         ModelTypeLLM,
+		ApiStyle:     "openai",
+		ApiBase:      "http://127.0.0.1:1234/v1/",
+		ApiToken:     "123456",
+	})
 	models, err := client.Models(context.TODO())
 	assert.Empty(t, err)
 	for _, model := range models.Models {
@@ -37,7 +30,14 @@ func TestOpenAIStyleBackend_Models(t *testing.T) {
 }
 
 func TestOpenAIStyleBackend_ChatCompletions(t *testing.T) {
-	client := _initOpenAIStyleBackend()
+	client, _ := NewOpenAIStyleBackend(&AdapterConfig{
+		Name:         "ollama",
+		DefaultModel: "gemma2:9b",
+		Type:         ModelTypeLLM,
+		ApiStyle:     "openai",
+		ApiBase:      "http://127.0.0.1:1234/v1/",
+		ApiToken:     "123456",
+	})
 	seed := -9007199254740991
 	res, err := client.ChatCompletions(context.TODO(), openai.ChatCompletionRequest{
 		Messages: []openai.ChatCompletionMessage{
@@ -66,7 +66,14 @@ func TestOpenAIStyleBackend_ChatCompletions(t *testing.T) {
 }
 
 func TestOpenAIStyleBackend_ChatCompletionsStreaming(t *testing.T) {
-	client := _initOpenAIStyleBackend()
+	client, _ := NewOpenAIStyleBackend(&AdapterConfig{
+		Name:         "ollama",
+		DefaultModel: "gemma2:9b",
+		Type:         ModelTypeLLM,
+		ApiStyle:     "openai",
+		ApiBase:      "http://127.0.0.1:1234/v1/",
+		ApiToken:     "123456",
+	})
 	seed := -9007199254740991
 	stream, err := client.ChatCompletionsStreaming(context.TODO(), openai.ChatCompletionRequest{
 		Messages: []openai.ChatCompletionMessage{
@@ -114,7 +121,14 @@ func TestOpenAIStyleBackend_ChatCompletionsStreaming(t *testing.T) {
 }
 
 func TestOpenAIStyleBackend_AudioSpeech(t *testing.T) {
-	client := _initOpenAIStyleBackend()
+	client, _ := NewOpenAIStyleBackend(&AdapterConfig{
+		Name:         "ollama",
+		DefaultModel: "gemma2:9b",
+		Type:         ModelTypeTTS,
+		ApiStyle:     "openai",
+		ApiBase:      "http://127.0.0.1:1234/v1/",
+		ApiToken:     "123456",
+	})
 	res, err := client.AudioSpeech(context.TODO(), openai.CreateSpeechRequest{
 		Input:          "Hello, my name is Musk.",
 		Model:          openai.TTSModel1,
@@ -141,11 +155,18 @@ func TestOpenAIStyleBackend_AudioTranscriptions(t *testing.T) {
 
 	rpath := filepath.Join(lib.RuntimeDir(), "../", "tmp")
 
-	fs, err := os.Open(filepath.Join(rpath, "hhll.wav"))
+	fs, err := os.Open(filepath.Join(rpath, "audio.wav"))
 	assert.Empty(t, err)
 	defer fs.Close()
 
-	client := _initOpenAIStyleBackend()
+	client, _ := NewOpenAIStyleBackend(&AdapterConfig{
+		Name:         "ollama",
+		DefaultModel: "gemma2:9b",
+		Type:         ModelTypeSTT,
+		ApiStyle:     "openai",
+		ApiBase:      "http://127.0.0.1:1234/v1/",
+		ApiToken:     "123456",
+	})
 	res, err := client.AudioTranscriptions(context.TODO(), openai.AudioRequest{
 		Reader:      fs,
 		FilePath:    "a.wav",
@@ -161,7 +182,14 @@ func TestOpenAIStyleBackend_AudioTranscriptions(t *testing.T) {
 
 func TestOpenAIStyleBackend_ImagesGenerations(t *testing.T) {
 
-	client := _initOpenAIStyleBackend()
+	client, _ := NewOpenAIStyleBackend(&AdapterConfig{
+		Name:         "ollama",
+		DefaultModel: "gemma2:9b",
+		Type:         ModelTypeTTS,
+		ApiStyle:     "openai",
+		ApiBase:      "http://127.0.0.1:1234/v1/",
+		ApiToken:     "123456",
+	})
 	res, err := client.ImagesGenerations(context.TODO(), openai.ImageRequest{
 		Prompt:         "章鱼哥",
 		Model:          openai.CreateImageModelDallE3,
