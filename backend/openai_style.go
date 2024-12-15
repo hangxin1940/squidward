@@ -29,11 +29,19 @@ func NewOpenAIStyleBackend(cfg *AdapterConfig) (*OpenAIStyleBackend, error) {
 		httpClient.Transport = &http.Transport{Proxy: http.ProxyURL(pu)}
 	}
 
+	dfvoice := ""
+	if cfg.Extras["default_voice"] != nil {
+		if v, ok := cfg.Extras["default_voice"].(string); ok {
+			dfvoice = v
+		}
+	}
+
 	config.HTTPClient = httpClient
 
 	return &OpenAIStyleBackend{
 		name:         cfg.Name,
 		defaultModel: cfg.DefaultModel,
+		defaultVoice: dfvoice,
 		modelType:    cfg.Type,
 		client:       openai.NewClientWithConfig(config),
 	}, nil
@@ -43,6 +51,7 @@ func NewOpenAIStyleBackend(cfg *AdapterConfig) (*OpenAIStyleBackend, error) {
 type OpenAIStyleBackend struct {
 	name         string
 	defaultModel string
+	defaultVoice string
 	modelType    ModelType
 	client       *openai.Client
 }
@@ -77,6 +86,10 @@ func (o *OpenAIStyleBackend) AudioSpeech(ctx context.Context, request openai.Cre
 	if request.Model == "" {
 		request.Model = openai.SpeechModel(o.defaultModel)
 	}
+	if request.Voice == "" {
+		request.Voice = openai.SpeechVoice(o.defaultVoice)
+	}
+
 	return o.client.CreateSpeech(ctx, request)
 }
 
