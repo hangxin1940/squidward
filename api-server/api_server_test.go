@@ -38,7 +38,7 @@ func _initApiServer() *ApiServer {
 
 	bkTTS, err := backend.NewOpenAIStyleBackend(&backend.AdapterConfig{
 		Name:         "ollama",
-		DefaultModel: "gemma2:9b",
+		DefaultModel: "tts-1",
 		Type:         backend.ModelTypeTTS,
 		ApiStyle:     "openai",
 		ApiBase:      "http://127.0.0.1:1234/v1/",
@@ -222,6 +222,38 @@ func TestApiServer_AudioSpeech(t *testing.T) {
 
 }
 
+func TestApiServer_AudioTTS(t *testing.T) {
+
+	mserver := _initApiServer()
+	router := mserver.SetupRouter()
+
+	w := httptest.NewRecorder()
+
+	req, _ := http.NewRequest("GET", "/v1/audio/tts", nil)
+
+	q := req.URL.Query()
+	q.Add("input", "你好，我是章鱼哥")
+	q.Add("voice", "fable")
+	//q.Add("response_format", "wav")
+	//q.Add("speed", "0.8")
+	req.URL.RawQuery = q.Encode()
+
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+
+	rpath := filepath.Join(lib.RuntimeDir(), "../", "tmp")
+	os.MkdirAll(rpath, os.ModePerm)
+
+	outFile, err := os.Create(filepath.Join(rpath, "test22.wav"))
+	assert.Empty(t, err)
+	defer outFile.Close()
+	_, err = io.Copy(outFile, w.Body)
+
+	fmt.Println(w.Header())
+
+}
+
 func TestApiServer_AudioTranscriptions(t *testing.T) {
 
 	mserver := _initApiServer()
@@ -310,7 +342,16 @@ func TestApiServer_ImagesGenerations(t *testing.T) {
 
 func TestApiServer_sampleServer(t *testing.T) {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "<h1>Hello World</h1><div>Welcome to whereever you are</div>")
+		js := `{
+  "task" : "",
+  "language" : "",
+  "duration" : 0,
+  "segments" : null,
+  "words" : null,
+  "text" : "一加二等于几?"
+}`
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		fmt.Fprint(w, js)
 	})
 
 	err := http.ListenAndServe(fmt.Sprintf(":%d", 12345), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -1,6 +1,7 @@
 package api_server
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"squidward/backend"
 	"squidward/modules/audio"
 	"strconv"
+	"strings"
 )
 
 func NewApiServer(logger *logrus.Logger, aService *backend.AdapterService) *ApiServer {
@@ -79,6 +81,7 @@ func (s *ApiServer) SetupRouter() *gin.Engine {
 		apiRouter.POST("/chat/completions", s.chatCompletions)
 		apiRouter.POST("/images/generations", s.imagesGenerations)
 		apiRouter.POST("/audio/speech", s.audioSpeech)
+		apiRouter.GET("/audio/speech", s.audioSpeech)
 		apiRouter.POST("/audio/transcriptions", s.audioTranscriptions)
 		apiRouter.GET("/models", s.models)
 	}
@@ -88,6 +91,16 @@ func (s *ApiServer) SetupRouter() *gin.Engine {
 
 func (s *ApiServer) Stop() {
 	_ = s.netListener.Close()
+}
+
+type chatCompletionStreamChoice struct {
+	Index        int                                    `json:"index"`
+	Delta        openai.ChatCompletionStreamChoiceDelta `json:"delta"`
+	FinishReason openai.FinishReason                    `json:"finish_reason"`
+}
+
+type chatCompletionStreamResponse struct {
+	Choices []chatCompletionStreamChoice `json:"choices"`
 }
 
 // chatCompletions 聊天
@@ -114,7 +127,7 @@ func (s *ApiServer) chatCompletions(c *gin.Context) {
 				return false
 			}
 			for {
-				stream, rerr := res.RecvRaw()
+				streamObj, rerr := res.Recv()
 				if rerr != nil {
 					if errors.Is(rerr, io.EOF) {
 						return false
@@ -122,7 +135,20 @@ func (s *ApiServer) chatCompletions(c *gin.Context) {
 					return true
 				}
 
-				line := "data: " + string(stream) + "\n\n"
+				stream := chatCompletionStreamResponse{
+					Choices: []chatCompletionStreamChoice{},
+				}
+				for _, ch := range streamObj.Choices {
+					stream.Choices = append(stream.Choices, chatCompletionStreamChoice{
+						Index:        ch.Index,
+						Delta:        ch.Delta,
+						FinishReason: ch.FinishReason,
+					})
+				}
+
+				bs, _ := json.Marshal(stream)
+
+				line := "data: " + string(bs) + "\n\n"
 				_, _ = w.Write([]byte(line))
 			}
 		})
@@ -176,9 +202,35 @@ func (s *ApiServer) audioSpeech(c *gin.Context) {
 
 	req := openai.CreateSpeechRequest{}
 
-	if err := c.ShouldBindBodyWithJSON(&req); err != nil {
-		c.Status(http.StatusBadRequest)
-		return
+	asfile := false
+
+	if c.Request.Method == http.MethodPost {
+		if err := c.ShouldBindBodyWithJSON(&req); err != nil {
+			c.Status(http.StatusBadRequest)
+			return
+		}
+	} else {
+		input := strings.TrimSpace(c.Query("input"))
+		if input == "" {
+			c.Status(http.StatusBadRequest)
+			return
+		}
+
+		format := strings.TrimSpace(c.Query("response_format"))
+		voice := strings.TrimSpace(c.Query("voice"))
+		speedStr := strings.TrimSpace(c.Query("speed"))
+		asfile = strings.TrimSpace(c.Query("file")) != ""
+		speed := float64(0)
+		if speedStr != "" {
+			if speedN, err := strconv.ParseFloat(speedStr, 64); err == nil {
+				speed = speedN
+			}
+		}
+
+		req.Input = input
+		req.ResponseFormat = openai.SpeechResponseFormat(format)
+		req.Speed = speed
+		req.Voice = openai.SpeechVoice(voice)
 	}
 
 	res, err := bk.AudioSpeech(context.Background(), req)
@@ -187,10 +239,38 @@ func (s *ApiServer) audioSpeech(c *gin.Context) {
 		c.Status(http.StatusInternalServerError)
 		return
 	}
+	length := int64(0)
+	lengthStr := strings.TrimSpace(res.Header().Get("Content-Length"))
+	if lengthStr == "" && !asfile {
+		c.Header("Transfer-Encoding", "chunked")
+	} else {
+		length, _ = strconv.ParseInt(res.Header().Get("Content-Length"), 10, 64)
+	}
 
-	length, _ := strconv.ParseInt(res.Header().Get("Content-Length"), 10, 64)
+	if length > 0 || asfile {
+		alldata, _ := io.ReadAll(res)
+		reader := bytes.NewReader(alldata)
+		c.DataFromReader(http.StatusOK, int64(reader.Len()), res.Header().Get("Content-Type"), reader, nil)
+	} else {
+		w := c.Writer
+		header := w.Header()
+		header.Set("Transfer-Encoding", "chunked")
+		header.Set("Content-Type", res.Header().Get("Content-Type"))
+		w.WriteHeader(http.StatusOK)
+		var buf [85000]byte
+		for {
+			n, errn := res.Read(buf[0:])
+			if errn != nil {
+				if errn != io.EOF {
+					s.logger.Warnf("read error: %v", errn)
+				}
+				break
+			}
+			w.Write(buf[0:n])
+		}
 
-	c.DataFromReader(http.StatusOK, int64(length), res.Header().Get("Content-Type"), res, nil)
+		w.(http.Flusher).Flush()
+	}
 
 }
 
