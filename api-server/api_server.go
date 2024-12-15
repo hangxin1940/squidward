@@ -58,6 +58,7 @@ func (s *ApiServer) MiddlePanic(c *gin.Context, recovered interface{}) {
 func (s *ApiServer) SetupRouter() *gin.Engine {
 	router := gin.New()
 	router.RedirectTrailingSlash = true
+	router.Use(gin.Logger())
 	// 异常恢复
 	router.Use(gin.CustomRecovery(s.MiddlePanic))
 
@@ -101,6 +102,14 @@ type chatCompletionStreamChoice struct {
 
 type chatCompletionStreamResponse struct {
 	Choices []chatCompletionStreamChoice `json:"choices"`
+}
+
+type chatCompletionChoice struct {
+	Message openai.ChatCompletionMessage `json:"message"`
+}
+
+type chatCompletionResponse struct {
+	Choices []chatCompletionChoice `json:"choices"`
 }
 
 // chatCompletions 聊天
@@ -160,7 +169,16 @@ func (s *ApiServer) chatCompletions(c *gin.Context) {
 			return
 		}
 
-		c.JSON(200, res)
+		res1 := chatCompletionResponse{
+			Choices: []chatCompletionChoice{},
+		}
+		for _, ch := range res.Choices {
+			res1.Choices = append(res1.Choices, chatCompletionChoice{
+				Message: ch.Message,
+			})
+		}
+
+		c.JSON(200, res1)
 	}
 
 }
@@ -341,7 +359,6 @@ func (s *ApiServer) audioTranscriptions(c *gin.Context) {
 				c.Status(http.StatusInternalServerError)
 				return
 			}
-			s.logger.Debug(res.Language, res.Text)
 			c.JSON(http.StatusOK, res)
 		} else {
 			c.Status(http.StatusOK)

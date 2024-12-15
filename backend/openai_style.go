@@ -21,13 +21,25 @@ func NewOpenAIStyleBackend(cfg *AdapterConfig) (*OpenAIStyleBackend, error) {
 		Timeout: cfg.HttpTimeout,
 	}
 
+	transport := &http.Transport{
+		//DialContext: (&net.Dialer{
+		//	Timeout:   30 * time.Second,
+		//	KeepAlive: 30 * time.Second,
+		//}).DialContext,
+		//TLSHandshakeTimeout:   10 * time.Second,
+		//ResponseHeaderTimeout: cfg.HttpTimeout,
+		//ExpectContinueTimeout: 1 * time.Second,
+	}
+
 	if cfg.HttpProxy != "" {
 		pu, err := url.Parse(cfg.HttpProxy)
 		if err != nil {
 			return nil, err
 		}
-		httpClient.Transport = &http.Transport{Proxy: http.ProxyURL(pu)}
+		transport.Proxy = http.ProxyURL(pu)
 	}
+
+	httpClient.Transport = transport
 
 	dfvoice := ""
 	if cfg.Extras["default_voice"] != nil {
