@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 	"github.com/sashabaranov/go-openai"
 	"github.com/sirupsen/logrus"
 	"io"
@@ -84,6 +86,7 @@ func (s *ApiServer) SetupRouter() *gin.Engine {
 		apiRouter.POST("/audio/speech", s.audioSpeech)
 		apiRouter.GET("/audio/speech", s.audioSpeech)
 		apiRouter.POST("/audio/transcriptions", s.audioTranscriptions)
+		apiRouter.GET("/audio/transcriptions/ws", s.wsAudioTranscriptions)
 		apiRouter.GET("/models", s.models)
 	}
 
@@ -413,6 +416,87 @@ func (s *ApiServer) audioTranscriptions(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, res)
+}
+
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+	CheckOrigin: func(r *http.Request) bool {
+		return true
+	},
+}
+
+type audioFrame struct {
+	FrameIndex int    `json:"frame_index"`
+	IsFinish   int    `json:"is_finish"`
+	Data       string `json:"data"`
+}
+
+// wsAudioTranscriptions STT websocket
+func (s *ApiServer) wsAudioTranscriptions(c *gin.Context) {
+	bk := s.aService.GetBackend(backend.ModelTypeSTT)
+	if bk == nil {
+		s.logger.Error("未配置STT")
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+
+	file_name := c.Query("file")
+	model := c.Query("model")
+	audio_id := c.Query("audio_id")
+	audio_mime := c.Query("audio_mime")
+	language := c.Query("language")
+	prompt := c.Query("prompt")
+	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		s.logger.Debugln(err.Error())
+		c.Status(http.StatusBadRequest)
+		return
+	}
+	defer conn.Close()
+	for {
+		var data audioFrame
+		if errc := conn.ReadJSON(&data); errc != nil {
+			s.logger.Error(errc)
+			break
+		}
+		s.logger.Tracef("audio frame %s %d", audio_id, data.FrameIndex)
+
+		af := s.audioFrames[audio_id]
+		if af == nil {
+			af = audio.NewAudio(audio_mime)
+			s.audioFrames[audio_id] = af
+		}
+		bdata, errb := base64.StdEncoding.DecodeString(data.Data)
+		if errb != nil {
+			break
+		}
+		af.AddFrame(data.FrameIndex, bdata)
+
+		if data.IsFinish == 1 {
+			defer delete(s.audioFrames, audio_id)
+
+			req := openai.AudioRequest{
+				Model:    model,
+				Reader:   af.ToAudioBytesReader(),
+				FilePath: file_name,
+				Language: language,
+				Prompt:   prompt,
+			}
+			s.logger.Tracef("audio %s send stt...", audio_id)
+			res, errt := bk.AudioTranscriptions(context.Background(), req)
+			if errt != nil {
+				s.logger.Error(errt)
+				return
+			}
+			s.logger.Tracef("audio %s: %s", audio_id, res.Text)
+			err = conn.WriteMessage(websocket.TextMessage, []byte(res.Text))
+			if err != nil {
+				s.logger.Error(err)
+				return
+			}
+		}
+	}
 }
 
 func (s *ApiServer) audioTranscriptionsFrame(form *multipart.Form) (*openai.AudioRequest, error) {

@@ -3,6 +3,7 @@ package api_server
 import (
 	"bytes"
 	"cmp"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/sashabaranov/go-openai"
@@ -404,6 +405,48 @@ func TestApiServer_saveAudioFrames(t *testing.T) {
 		}
 
 		fmt.Fprintf(w, "Hello, %s!", r.URL.Path[1:])
+	})
+
+	err := http.ListenAndServe(fmt.Sprintf(":%d", 12345), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+		fmt.Printf("%s %s %s\n", r.RemoteAddr, r.Method, r.URL)
+		//for k, h := range r.Header {
+		//	fmt.Printf("\t%s: %s\n", k, strings.Join(h, "; "))
+		//}
+		fmt.Println()
+
+		http.DefaultServeMux.ServeHTTP(w, r)
+	}))
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func TestApiServer_saveAudioFramesWebSocket(t *testing.T) {
+	// Create test server with the echo handler.
+	http.HandleFunc("/v1/audio/transcriptions/ws", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			fmt.Println(err.Error())
+			return
+		}
+		defer conn.Close()
+		for {
+			var data audioFrame
+			if errc := conn.ReadJSON(&data); errc != nil {
+				t.Error(errc)
+				break
+			}
+			fmt.Println(data.FrameIndex, data.IsFinish, len(data.Data))
+			rpath := filepath.Join(lib.RuntimeDir(), "../", "tmp", "audioframe_ws")
+			os.MkdirAll(rpath, os.ModePerm)
+			bdata, errb := base64.StdEncoding.DecodeString(data.Data)
+			if errb != nil {
+				break
+			}
+			os.WriteFile(filepath.Join(rpath, fmt.Sprintf("%d_ws", data.FrameIndex)), bdata, 0644)
+
+		}
 	})
 
 	err := http.ListenAndServe(fmt.Sprintf(":%d", 12345), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

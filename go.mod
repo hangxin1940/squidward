@@ -4,6 +4,7 @@ go 1.23
 
 require (
 	github.com/gin-gonic/gin v1.10.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/mgutz/ansi v0.0.0-20200706080929-d51e80ef957d
 	github.com/sashabaranov/go-openai v1.36.0
 	github.com/sirupsen/logrus v1.9.3

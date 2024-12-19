@@ -66,7 +66,7 @@ func _loadFrames(aid string) Audio {
 }
 
 func TestAudio_parseFrames(t *testing.T) {
-	id := "1"
+	id := "ws"
 	af := _loadFrames(id)
 
 	audiobytes := af.ToAudioBytesReader()
